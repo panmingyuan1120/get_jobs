@@ -38,7 +38,8 @@ public class Yupao {
     }
 
     public static final String HOME_URL = "https://www.yupao.com/web/";
-    public static final String SEARCH_URL_TEMPLATE = "https://www.yupao.com/web/search?keyword=%s";
+    /** 岗位列表页（鱼泡 SPA 真实路由，来自站点路由表；关键词通过页面内搜索框输入） */
+    public static final String JOB_LIST_URL = "https://www.yupao.com/web/job/list";
 
     @Getter
     private Date startDate;
@@ -116,14 +117,10 @@ public class Yupao {
     private int deliverByKeyword(String keyword) {
         int delivered = 0;
         try {
-            String url = String.format(SEARCH_URL_TEMPLATE, java.net.URLEncoder
-                    .encode(keyword, java.nio.charset.StandardCharsets.UTF_8));
-            if (config.getCity() != null && !config.getCity().isBlank()) {
-                // 城市筛选优先通过页面上的城市选择器完成；URL 是否支持城市参数需登录后验证
-                log.info("【{}】配置城市：{}（将通过页面筛选器选择）", keyword, config.getCity());
-            }
-            report(String.format("【%s】打开搜索页：%s", keyword, url));
-            navigate(url);
+            report(String.format("【%s】打开岗位列表页：%s", keyword, JOB_LIST_URL));
+            navigate(JOB_LIST_URL);
+            // 关键词通过页面内搜索框输入（URL 参数格式未公开，页面内输入最可靠）
+            searchOnPage(keyword);
 
             int maxPage = config.getMaxPage() != null && config.getMaxPage() > 0
                     ? config.getMaxPage() : 10;
@@ -147,6 +144,33 @@ public class Yupao {
             report(String.format("【%s】执行异常：%s", keyword, e.getMessage()));
         }
         return delivered;
+    }
+
+    /**
+     * 在岗位列表页的搜索框中输入关键词并触发搜索。
+     * 找不到搜索框时仅记录日志，不中断流程（列表页本身也会展示推荐岗位）。
+     */
+    private void searchOnPage(String keyword) {
+        try {
+            Locator searchInput = page.locator(Locators.SEARCH_INPUT).first();
+            searchInput.waitFor(new Locator.WaitForOptions()
+                    .setState(com.microsoft.playwright.options.WaitForSelectorState.VISIBLE)
+                    .setTimeout(8_000));
+            searchInput.fill(keyword);
+            // 回车触发搜索（antd 搜索框通用行为），失败再点搜索按钮
+            try {
+                searchInput.press("Enter");
+            } catch (Exception e) {
+                Locator btn = page.locator(Locators.SEARCH_BUTTON).first();
+                if (btn.count() > 0) {
+                    btn.click();
+                }
+            }
+            sleepSeconds(2);
+            log.info("【{}】已在页面搜索框输入关键词并触发搜索", keyword);
+        } catch (Exception e) {
+            log.warn("【{}】未找到搜索框（{}），将按列表页默认内容继续", keyword, e.getMessage());
+        }
     }
 
     /**
