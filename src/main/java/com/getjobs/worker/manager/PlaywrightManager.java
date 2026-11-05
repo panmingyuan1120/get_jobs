@@ -72,6 +72,9 @@ public class PlaywrightManager {
     // 智联招聘页面（预留）
     private Page zhilianPage;
 
+    // 鱼泡直聘页面（www.yupao.com/web/）
+    private Page yupaoPage;
+
     // 登录状态追踪（平台 -> 是否已登录）
     private final Map<String, Boolean> loginStatus = new ConcurrentHashMap<>();
 
@@ -124,10 +127,13 @@ public class PlaywrightManager {
     private static final String LIEPIN_URL = "https://www.liepin.com";
   private static final String JOB51_URL = "https://www.51job.com";
     private static final String ZHILIAN_URL = "https://www.zhaopin.com";
+    private static final String YUPAO_URL = "https://www.yupao.com/web/";
+    private static final String YUPAO_LOGIN_URL = "https://www.yupao.com/web/login";
     private static final String BOSS_DOMAIN = "zhipin.com";
     private static final String LIEPIN_DOMAIN = "liepin.com";
     private static final String JOB51_DOMAIN = "51job.com";
     private static final String ZHILIAN_DOMAIN = "zhaopin.com";
+    private static final String YUPAO_DOMAIN = "yupao.com";
     // 降噪：51job Cookie保存日志节流状态
     private volatile long last51CookieLogMs = 0L;
     private volatile int last51CookieLogCount = -1;
@@ -368,6 +374,10 @@ public class PlaywrightManager {
             zhilianPage.setDefaultTimeout(DEFAULT_TIMEOUT);
             log.info("✓ 智联招聘 Page已创建");
 
+            yupaoPage = context.newPage();
+            yupaoPage.setDefaultTimeout(DEFAULT_TIMEOUT);
+            log.info("✓ 鱼泡直聘 Page已创建");
+
             // 四个业务页都建好了，把持久化上下文自带的启动空白页关掉
             for (Page startup : startupPages) {
                 try {
@@ -387,6 +397,7 @@ public class PlaywrightManager {
             setupLiepinPlatform();
             setup51jobPlatform();
             setupZhilianPlatform();
+            setupYupaoPlatform();
 
             log.info("✓ 浏览器自动化引擎初始化完成（所有平台已依次启动）");
             log.info("========================================");
@@ -1277,6 +1288,166 @@ public class PlaywrightManager {
     }
 
     /**
+     * 初始化鱼泡直聘平台：
+     * 从数据库恢复 Cookie（如有）-> 导航到 web 端首页 -> 检测登录态。
+     *
+     * <p>鱼泡（www.yupao.com/web/，React + antd SPA）的登录态判定基于
+     * 域名下的鉴权类 Cookie（名字含 token/session/uid），为通用启发式，
+     * 如有偏差需在真实登录后按实际 Cookie 名校准。
+     */
+    private void setupYupaoPlatform() {
+        log.info("开始初始化鱼泡直聘平台...");
+        try {
+            CookieEntity cookieEntity = cookieService.getCookieByPlatform("yupao");
+            if (cookieEntity != null && cookieEntity.getCookieValue() != null
+                    && !cookieEntity.getCookieValue().isBlank()) {
+                List<Cookie> cookies = filterCookiesByDomain(
+                        parseCookiesFromString(cookieEntity.getCookieValue()), YUPAO_DOMAIN);
+                if (!cookies.isEmpty()) {
+                    context.addCookies(cookies);
+                    log.info("已从数据库加载鱼泡 Cookie 并注入浏览器上下文，共 {} 条", cookies.size());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("从数据库加载鱼泡Cookie失败: {}", e.getMessage());
+        }
+
+        // 导航到鱼泡 web 端（带重试）
+        boolean navigateSuccess = false;
+        for (int attempt = 1; attempt <= 3 && !navigateSuccess; attempt++) {
+            try {
+                yupaoPage.navigate(YUPAO_URL, new Page.NavigateOptions()
+                        .setTimeout(60000)
+                        .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                navigateSuccess = true;
+            } catch (Exception e) {
+                try {
+                    String url = yupaoPage.url();
+                    if (url != null && url.contains(YUPAO_DOMAIN)) {
+                        navigateSuccess = true;
+                        break;
+                    }
+                } catch (Exception ignored) {
+                }
+                if (attempt < 3) {
+                    try {
+                        Thread.sleep(2000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        }
+        if (!navigateSuccess) {
+            log.warn("鱼泡页面导航失败（下次触发登录时会重试）");
+        }
+
+        try {
+            yupaoPage.waitForLoadState(LoadState.NETWORKIDLE,
+                    new Page.WaitForLoadStateOptions().setTimeout(LOAD_STATE_TIMEOUT));
+        } catch (Exception e) {
+            log.debug("等待鱼泡页面网络空闲失败: {}", e.getMessage());
+        }
+
+        setLoginStatus("yupao", checkIfYupaoLoggedIn());
+    }
+
+    /**
+     * 鱼泡登录态检测（启发式）：
+     * 1) 有鉴权类 Cookie（名字含 token/session/uid 等）即视为已登录；
+     * 2) 兜底：页面上找不到「登录/注册」入口也视为已登录。
+     * ⚠️ 需要真实登录后按实际 Cookie 名/页面结构校准。
+     */
+    private boolean checkIfYupaoLoggedIn() {
+        try {
+            List<Cookie> cookies = context.cookies(YUPAO_URL);
+            for (Cookie c : cookies) {
+                String name = c.name == null ? "" : c.name.toLowerCase();
+                // 只认强鉴权信号（token/session/passport/auth）；
+                // uid/login 一类的通用 Cookie 未登录也会发，误报率高，不作为判定依据
+                if (name.contains("token") || name.contains("session")
+                        || name.contains("passport") || name.contains("auth")) {
+                    log.debug("鱼泡检测到鉴权类 Cookie: {}", c.name);
+                    return true;
+                }
+            }
+            // 兜底：页面探测「登录」入口（未登录时通常显示）。
+            // 仅当页面确实落在鱼泡域名时才信任探测结果，否则页面未加载成功，视为未登录
+            if (yupaoPage != null) {
+                String currentUrl = null;
+                try {
+                    currentUrl = yupaoPage.url();
+                } catch (Exception ignored) {
+                }
+                if (currentUrl == null || !currentUrl.contains(YUPAO_DOMAIN)) {
+                    return false;
+                }
+                Locator loginEntry = yupaoPage.locator(
+                        "a[href*='login'], button:has-text('登录'), [class*='login']").first();
+                boolean loginEntryVisible = false;
+                try {
+                    loginEntryVisible = loginEntry.isVisible(new Locator.IsVisibleOptions()
+                            .setTimeout(LOCATOR_PROBE_TIMEOUT));
+                } catch (Exception ignored) {
+                }
+                // 有「登录」入口 = 未登录
+                return !loginEntryVisible;
+            }
+            return false;
+        } catch (Exception e) {
+            log.debug("鱼泡登录态检测失败: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /** 获取鱼泡页面（供 Worker 与登录触发使用）。 */
+    public Page getYupaoPage() {
+        return yupaoPage;
+    }
+
+    /**
+     * 触发鱼泡登录：把鱼泡页面导航到登录页，等待用户微信扫码。
+     * 登录完成后由前端轮询 /api/yupao/login-status 获知结果。
+     */
+    public void triggerYupaoLogin() {
+        runOnPlaywright(() -> {
+            try {
+                if (yupaoPage == null) {
+                    log.warn("鱼泡页面未初始化，无法触发登录");
+                    return;
+                }
+                yupaoPage.navigate(YUPAO_LOGIN_URL, new Page.NavigateOptions()
+                        .setTimeout(60000)
+                        .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
+                log.info("已打开鱼泡登录页，等待用户微信扫码");
+            } catch (Exception e) {
+                log.warn("打开鱼泡登录页失败: {}", e.getMessage());
+            }
+        });
+    }
+
+    /** 把鱼泡 Cookie 保存到数据库（手动触发登录成功后调用）。 */
+    public void saveYupaoCookiesToDb(String remark) {
+        try {
+            List<com.microsoft.playwright.options.Cookie> cookies =
+                    filterCookiesByDomain(context.cookies(), YUPAO_DOMAIN);
+            String cookieJson = new ObjectMapper().writeValueAsString(cookies);
+            boolean result = cookieService.saveOrUpdateCookie("yupao", cookieJson, remark);
+            if (result) {
+                setLoginStatus("yupao", true);
+                log.info("保存鱼泡Cookie成功，共 {} 条，remark={}", cookies.size(), remark);
+            }
+        } catch (Exception e) {
+            log.warn("保存鱼泡Cookie失败: {}", e.getMessage());
+        }
+    }
+
+    /** 刷新鱼泡登录态（供前端轮询接口调用）。 */
+    public boolean refreshYupaoLoginStatus() {
+        return callOnPlaywright(this::checkIfYupaoLoggedIn);
+    }
+
+    /**
      * 检查智联招聘是否已登录
      * 未登录时只在首次检测时引导用户到登录页
      */
@@ -1529,7 +1700,7 @@ public class PlaywrightManager {
     /**
      * 统一按平台保存 Cookie 到数据库
      *
-     * @param platform 平台标识（boss/liepin/51job/zhilian）
+     * @param platform 平台标识（boss/liepin/51job/zhilian/yupao）
      * @param remark   备注
      */
     public void saveCookiesToDb(String platform, String remark) {
@@ -1538,6 +1709,7 @@ public class PlaywrightManager {
             case "liepin" -> saveLiepinCookiesToDatabase(remark);
             case "51job" -> save51jobCookiesToDatabase(remark);
             case "zhilian" -> saveZhilianCookiesToDatabase(remark);
+            case "yupao" -> saveYupaoCookiesToDb(remark);
             default -> throw new IllegalArgumentException("Unsupported platform: " + platform);
         }
     }

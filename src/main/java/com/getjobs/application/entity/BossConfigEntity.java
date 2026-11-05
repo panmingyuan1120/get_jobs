@@ -21,6 +21,8 @@ public class BossConfigEntity {
     private String keywords;
     /** 城市（名称或代码，支持列表） */
     private String cityCode;
+    /** 区县（国标行政区划代码，逗号或括号列表，如 "[330106,330110]"） */
+    private String areaBusiness;
     /** 行业（名称或代码，支持列表） */
     private String industry;
     /** 职位类型（名称或代码，单值或列表，优先取第一项） */

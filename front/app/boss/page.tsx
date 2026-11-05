@@ -21,6 +21,7 @@ interface BossConfig {
   waitTime?: number
   keywords?: string
   cityCode?: string
+  areaBusiness?: string
   industry?: string
   jobType?: string
   experience?: string
@@ -97,6 +98,10 @@ export default function BossPage() {
   const [selectedScale, setSelectedScale] = useState<string[]>([])
   const [selectedStage, setSelectedStage] = useState<string[]>([])
   const [selectedSalary, setSelectedSalary] = useState<string[]>([])
+  // 区县（级联：随工作城市变化重新加载）
+  const [areaOptions, setAreaOptions] = useState<BossOption[]>([])
+  const [selectedAreas, setSelectedAreas] = useState<string[]>([])
+  const [areaLoading, setAreaLoading] = useState(false)
   const [options, setOptions] = useState<BossOptions>({
     city: [],
     industry: [],
@@ -271,6 +276,8 @@ export default function BossPage() {
         setSelectedScale(parseListString(data.config.scale))
         setSelectedStage(parseListString(data.config.stage))
         setSelectedSalary(parseListString(data.config.salary))
+        // 区县：保存的是国标码括号列表，直接回显
+        setSelectedAreas(parseListString(data.config.areaBusiness))
       }
       if (data.options) {
         // 按 sort_order 或固定名称顺序排序；都没有时按名称兜底
@@ -412,6 +419,36 @@ export default function BossPage() {
       .filter(v => v.length > 0)
   }
 
+  // 区县级联：城市变化时拉取该城市的区县选项，并把已选区县限定在该城市内
+  const cityCodeForArea = config.cityCode && config.cityCode !== '0' ? config.cityCode : ''
+  useEffect(() => {
+    if (!cityCodeForArea) {
+      setAreaOptions([])
+      return
+    }
+    let cancelled = false
+    setAreaLoading(true)
+    fetch(`${API_BASE}/api/boss/config/options/area?cityCode=${encodeURIComponent(cityCodeForArea)}`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((list: BossOption[]) => {
+        if (cancelled) return
+        const areas = Array.isArray(list) ? list : []
+        setAreaOptions(areas)
+        // 城市切换后，仅保留仍属于该城市的已选区县
+        const validCodes = new Set(areas.map((a) => a.code))
+        setSelectedAreas((prev) => prev.filter((c) => validCodes.has(c)))
+      })
+      .catch(() => {
+        if (!cancelled) setAreaOptions([])
+      })
+      .finally(() => {
+        if (!cancelled) setAreaLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [cityCodeForArea])
+
   // 工具：将数组转为括号列表字符串
   const toBracketList = (list: string[]): string => {
     if (!list || list.length === 0) return ''
@@ -427,6 +464,8 @@ export default function BossPage() {
         ...(overrides || {}),
         // 关键词：前端发送逗号分隔的纯文本，后端统一组装为 JSON 列表
         keywords: keywordsDisplay,
+        // 区县：国标码括号列表
+        areaBusiness: toBracketList(selectedAreas),
         industry: toBracketList(selectedIndustry),
         experience: toBracketList(selectedExperience),
         degree: toBracketList(selectedDegree),
@@ -906,9 +945,26 @@ export default function BossPage() {
                         {city.name}
                       </option>
                     ))}
-                </Select>
-                <p className="text-xs text-muted-foreground">目标工作城市（按设定顺序显示）</p>
-              </div>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">目标工作城市（按设定顺序显示）</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>区县（商圈）</Label>
+                  {cityCodeForArea ? (
+                    <MultiSelect
+                      options={areaOptions}
+                      selected={selectedAreas}
+                      onChange={setSelectedAreas}
+                      placeholder={areaLoading ? '区县加载中…' : '选择区县，可多选'}
+                    />
+                  ) : (
+                    <div className="flex h-9 items-center rounded-md border border-input bg-muted px-3 text-xs text-muted-foreground">
+                      请先选择城市，再选择区县
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">按区县细化搜索范围（如余杭区、西湖区），不选则搜全市</p>
+                </div>
 
               <div className="space-y-2">
                 <Label htmlFor="jobType">职位类型</Label>

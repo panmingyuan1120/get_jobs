@@ -659,6 +659,16 @@ public class Boss {
         }
         List<String> params = new ArrayList<>();
         addParam(params, JobUtils.appendParam("city", cityCode));
+        // 区县筛选：Boss 用国标行政区划码（如 330106=西湖区），多选逗号分隔
+        if (config.getAreaBusiness() != null && !config.getAreaBusiness().isEmpty()) {
+            String joined = config.getAreaBusiness().stream()
+                    .filter(a -> a != null && !a.isBlank())
+                    .map(String::trim)
+                    .collect(java.util.stream.Collectors.joining(","));
+            if (!joined.isEmpty()) {
+                params.add("areaBusiness=" + joined);
+            }
+        }
         addParam(params, JobUtils.appendParam("jobType", config.getJobType()));
         addParam(params, JobUtils.appendListParam("salary", config.getSalary()));
         addParam(params, JobUtils.appendListParam("experience", config.getExperience()));

@@ -71,6 +71,23 @@ public class BossService {
             if (tableExists && !names.contains("repeat_chat_messages")) {
                 statement.executeUpdate("ALTER TABLE boss_config ADD COLUMN repeat_chat_messages TEXT");
             }
+            if (tableExists && !names.contains("area_business")) {
+                statement.executeUpdate("ALTER TABLE boss_config ADD COLUMN area_business VARCHAR(200)");
+                log.info("已添加Boss区县筛选字段 area_business");
+            }
+            // boss_option 加父级代码列（type=area 时存放所属城市的 Boss 城市码）
+            boolean optionTableExists = false;
+            Set<String> optionNames = new java.util.HashSet<>();
+            try (ResultSet optionColumns = statement.executeQuery("PRAGMA table_info('boss_option')")) {
+                while (optionColumns.next()) {
+                    optionTableExists = true;
+                    optionNames.add(optionColumns.getString("name"));
+                }
+            }
+            if (optionTableExists && !optionNames.contains("parent_code")) {
+                statement.executeUpdate("ALTER TABLE boss_option ADD COLUMN parent_code VARCHAR(50)");
+                log.info("已添加boss_option.parent_code 列（区县选项的所属城市）");
+            }
         } catch (java.sql.SQLException e) {
             throw new IllegalStateException("无法初始化Boss重复沟通配置", e);
         }
@@ -274,6 +291,7 @@ public class BossService {
 
         if (partial.getKeywords() != null) existing.setKeywords(partial.getKeywords());
         if (partial.getCityCode() != null) existing.setCityCode(partial.getCityCode());
+        if (partial.getAreaBusiness() != null) existing.setAreaBusiness(partial.getAreaBusiness());
         if (partial.getIndustry() != null) existing.setIndustry(partial.getIndustry());
         if (partial.getJobType() != null) existing.setJobType(partial.getJobType());
         if (partial.getExperience() != null) existing.setExperience(partial.getExperience());
@@ -332,6 +350,9 @@ public class BossService {
         // 将中文名转换为代码，供 Worker 使用
         // 城市：单值或列表，统一转换为代码列表
         config.setCityCode(toCodes("city", parseListString(entity.getCityCode())));
+        // 区县：保存的是国标行政区划码（或区县名），统一为国标码列表
+        // 注意区县 code 是 6 位国标码且全局唯一（前 4 位对应该市），无需 parent 也可精确转换
+        config.setAreaBusiness(toAreaCodes(parseListString(entity.getAreaBusiness())));
         // 行业/经验/学历/规模/阶段：名称或代码 -> 统一为代码列表
         config.setIndustry(toCodes("industry", parseListString(entity.getIndustry())));
         config.setExperience(toCodes("experience", parseListString(entity.getExperience())));
@@ -430,6 +451,37 @@ public class BossService {
             String code = getCodeByTypeAndName(type, it);
             return code != null ? code : "0";
         }).collect(Collectors.toList());
+    }
+
+    /**
+     * 规范化区县：将传入值（国标码或区县名）统一为国标行政区划码。
+     * 区县选项的 code 为 6 位国标码，type=area。
+     * 找不到匹配时丢弃该项（而不是回退 "0"，避免污染 URL 参数）。
+     */
+    public List<String> toAreaCodes(List<String> items) {
+        if (items == null || items.isEmpty()) return Collections.emptyList();
+        return items.stream().map(it -> {
+            BossOptionEntity byCode = getOptionByTypeAndCode("area", it);
+            if (byCode != null && byCode.getCode() != null) {
+                return byCode.getCode();
+            }
+            String code = getCodeByTypeAndName("area", it);
+            return code != null && !"0".equals(code) ? code : null;
+        }).filter(java.util.Objects::nonNull).collect(Collectors.toList());
+    }
+
+    /**
+     * 获取指定城市下的区县选项列表（type=area，parent_code=城市Boss码）。
+     */
+    public List<BossOptionEntity> getAreasByCityCode(String cityCode) {
+        if (cityCode == null || cityCode.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+        QueryWrapper<BossOptionEntity> wrapper = new QueryWrapper<>();
+        wrapper.eq("type", "area");
+        wrapper.eq("parent_code", cityCode.trim());
+        wrapper.orderByAsc("id");
+        return bossOptionMapper.selectList(wrapper);
     }
 
     /**

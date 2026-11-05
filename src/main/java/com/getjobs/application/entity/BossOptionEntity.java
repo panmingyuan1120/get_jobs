@@ -14,9 +14,14 @@ public class BossOptionEntity {
     private Long id;
 
     /**
-     * 选项类型：city, industry, experience, jobType, salary, degree, scale, stage
+     * 选项类型：city, industry, experience, jobType, salary, degree, scale, stage, area
      */
     private String type;
+
+    /**
+     * 父级代码（type=area 时为所属城市的 Boss 城市码，如 101210100；其他类型为空）
+     */
+    private String parentCode;
 
     /**
      * 选项名称

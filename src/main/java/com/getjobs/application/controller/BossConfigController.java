@@ -93,6 +93,11 @@ public class BossConfigController {
             String cityName = bossService.normalizeCityToName(config.getCityCode());
             config.setCityCode(cityName);
         }
+        // 区县：统一归一化为国标行政区划码的括号列表（如 [330106,330110]）
+        if (config.getAreaBusiness() != null) {
+            java.util.List<String> areaCodes = bossService.toAreaCodes(bossService.parseListString(config.getAreaBusiness()));
+            config.setAreaBusiness(bossService.toBracketListString(areaCodes));
+        }
         // 其它多选：保存为中文名称的括号列表
         if (config.getIndustry() != null) {
             java.util.List<String> names = bossService.toNames("industry", bossService.parseListString(config.getIndustry()));
@@ -187,6 +192,25 @@ public class BossConfigController {
     @GetMapping("/options/{type}")
     public List<BossOptionEntity> getOptionsByType(@PathVariable String type) {
         return bossService.getOptionsByType(type);
+    }
+
+    /**
+     * 获取指定城市下的区县选项列表（用于区县级联选择）
+     *
+     * @param cityCode 城市的 Boss 城市码（如 101210100=杭州），也兼容城市中文名
+     */
+    @GetMapping("/options/area")
+    public List<BossOptionEntity> getAreaOptions(@RequestParam("cityCode") String cityCode) {
+        // 前端传的是 Boss 城市码；兼容误传中文名的情况
+        String code = cityCode;
+        BossOptionEntity byCode = bossService.getOptionByTypeAndCode("city", cityCode);
+        if (byCode == null) {
+            String resolved = bossService.getCodeByTypeAndName("city", cityCode);
+            if (resolved != null && !"0".equals(resolved)) {
+                code = resolved;
+            }
+        }
+        return bossService.getAreasByCityCode(code);
     }
 
     /**

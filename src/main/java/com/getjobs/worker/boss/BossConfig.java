@@ -57,6 +57,12 @@ public class BossConfig {
     private Map<String, String> customCityCode;
 
     /**
+     * 区县编码列表（国标行政区划代码，如 330106=西湖区、330110=余杭区）
+     * 对应 Boss 搜索 URL 的 areaBusiness 参数，多选逗号分隔
+     */
+    private List<String> areaBusiness;
+
+    /**
      * 行业列表
      */
     private List<String> industry;
