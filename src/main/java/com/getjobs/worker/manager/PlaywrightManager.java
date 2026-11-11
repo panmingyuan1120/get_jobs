@@ -127,7 +127,7 @@ public class PlaywrightManager {
     private static final String LIEPIN_URL = "https://www.liepin.com";
   private static final String JOB51_URL = "https://www.51job.com";
     private static final String ZHILIAN_URL = "https://www.zhaopin.com";
-    private static final String YUPAO_URL = "https://www.yupao.com/web/";
+    private static final String YUPAO_URL = "https://www.yupao.com/";
     private static final String YUPAO_LOGIN_URL = "https://www.yupao.com/web/login";
     private static final String BOSS_DOMAIN = "zhipin.com";
     private static final String LIEPIN_DOMAIN = "liepin.com";
