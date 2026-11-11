@@ -308,9 +308,11 @@ public class PlaywrightManager {
 
             // 用持久化上下文启动：Patchright 官方明确要求用 launchPersistentContext，
             // 而不是 launch() + newContext()。登录态直接落盘到 USER_DATA_DIR。
+            String channel = detectBrowserChannel();
+            log.info("使用浏览器 channel: {}（chrome=本机Chrome，msedge=系统自带Edge）", channel);
             context = playwright.chromium().launchPersistentContext(USER_DATA_DIR,
                     new BrowserType.LaunchPersistentContextOptions()
-                            .setChannel("chrome")   // 用本机真实 Chrome，而不是 Chromium
+                            .setChannel(channel)   // 优先本机 Chrome，没装则回退 Windows 自带 Edge
                             .setHeadless(false)     // 无头必被检测
                             .setSlowMo(50)          // 放慢操作速度，便于调试
                             .setViewportSize(null)  // 不锁视口，用窗口实际大小
@@ -467,6 +469,16 @@ public class PlaywrightManager {
     private String locateNodeExecutable() {
         boolean windows = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows");
         String exe = windows ? "node.exe" : "node";
+        // 绿色免安装包：node.exe 内置在程序目录里（user.dir/node/node.exe 或 user.dir/node.exe）
+        Path projectDir = Paths.get(System.getProperty("user.dir"));
+        List<Path> bundled = List.of(
+                projectDir.resolve("node").resolve(exe),
+                projectDir.resolve(exe));
+        for (Path candidate : bundled) {
+            if (Files.isRegularFile(candidate)) {
+                return candidate.toAbsolutePath().toString();
+            }
+        }
         String path = System.getenv("PATH");
         if (path == null) {
             return null;
@@ -485,6 +497,27 @@ public class PlaywrightManager {
             }
         }
         return null;
+    }
+
+    /**
+     * 探测可用浏览器 channel：优先 Chrome，未安装则回退 Windows 自带 Edge。
+     * 这样绿色免安装包在没有 Chrome 的电脑上也能直接跑。
+     */
+    private String detectBrowserChannel() {
+        String[] programDirs = {"C:/Program Files", "C:/Program Files (x86)"};
+        for (String dir : programDirs) {
+            if (Files.isRegularFile(Paths.get(dir, "Google", "Chrome", "Application", "chrome.exe"))) {
+                return "chrome";
+            }
+        }
+        for (String dir : programDirs) {
+            if (Files.isRegularFile(Paths.get(dir, "Microsoft", "Edge", "Application", "msedge.exe"))) {
+                log.info("未检测到 Chrome，回退使用系统自带 Edge 浏览器");
+                return "msedge";
+            }
+        }
+        // 都没找到就仍返回 chrome，让 Playwright 报出标准错误信息
+        return "chrome";
     }
 
     /**
